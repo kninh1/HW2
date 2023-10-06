@@ -1,28 +1,316 @@
 ---
-title: ""
-author: ""
+title: "Assignment 02 - Data Visualization and Wrangling"
 format:
   html:
     embed-resources: true
 ---
 
-## Quarto
+## Load necessary libraries
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
-```{r}
-1 + 1
+```{r,message=FALSE,warning=FALSE}
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+library(Amelia)
+library(leaflet)
 ```
 
-You can add options to executable code like this
+## Data Wrangling
+
+### Import the dataset
 
 ```{r}
-#| echo: false
-2 * 2
+Individual_data <- read.csv("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/01_chs/chs_individual.csv")
+Regional_data <- read.csv("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/01_chs/chs_regional.csv")
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+### Merge datasets
+
+```{r}
+merged_data <- merge(Individual_data, Regional_data, by = "townname", all.x = TRUE)
+
+head(merged_data)
+```
+
+### 1)
+
+```{r}
+duplicate_row <- sum(duplicated(merged_data))
+
+duplicate_row
+
+missing_values <- sum(is.na(merged_data))
+
+missing_values
+
+summary(merged_data)
+
+impute_data<-amelia(merged_data,m=5,maxit=5,idvars = c("townname", "sid","race","pm25_mass","pm25_so4","pm25_no3",    "pm25_nh4","pm25_oc","pm25_ec","pm25_om" ,"pm10_oc" ,"pm10_ec" ,"pm10_tc", "formic","acetic","hcl","hno3"  ,      "o3_max","o3106","o3_24","no2" , "pm10","no_24hr","pm2_5_fr","iacid" , "oacid" ,"total_acids" ,"lon" , "lat" ),noms = c("male", "hispanic","asthma","active_asthma" ,"father_asthma","mother_asthma" ,"wheeze","hayfever","allergy"   ,"educ_parent","smoke", "pets","gasstove" ))
+
+summary(impute_data)
+
+Final_data<-impute_data$imputations$imp1
+
+head(Final_data)
+```
+
+### 2)
+
+```{r}
+Final_data$obesity_level <- cut(Final_data$bmi, 
+
+                                breaks = c(-Inf, 14, 22, 24, Inf),
+
+                                labels = c("Underweight", "Normal", "Overweight", "Obese"),
+
+                                right = FALSE)
+
+summary(Final_data$obesity_level)
+
+# Create the summary table
+
+Table1 <- Final_data %>%
+
+  group_by(obesity_level) %>%
+
+  summarize( Minimum_BMI = min(bmi),
+
+    Maximum_BMI = max(bmi),
+
+    Total_Observations = n())
+
+Table1
+```
+
+### 3)
+
+```{r}
+Final_data$smoke_gas_exposure  <- as.factor(ifelse(Final_data$smoke==1&Final_data$gasstove==1, 'Both',
+
+                     ifelse(Final_data$smoke==0&Final_data$gasstove==0, 'None',
+
+                     ifelse(Final_data$smoke==1&Final_data$gasstove==0, 'Second Hand Smoke',
+
+                     ifelse(Final_data$smoke==0&Final_data$gasstove==1, 'Gas Stove', 'A')))))
+
+levels(Final_data$smoke_gas_exposure)
+```
+
+### 4)
+
+```{r}
+table_town <- Final_data %>%
+
+  group_by(townname) %>%
+
+  summarise(mean_asthma = mean(asthma), sd_asthma = sd(asthma))
+
+table_town
+
+table_sex <- Final_data %>%
+
+  group_by(male) %>%
+
+  summarise(mean_asthma = mean(asthma), sd_asthma = sd(asthma))
+
+table_sex
+
+table_obesity <- Final_data %>%
+
+  group_by(obesity_level) %>%
+
+  summarise(mean_asthma = mean(asthma), sd_asthma = sd(asthma))
+
+table_obesity
+
+table_exposure <- Final_data %>%
+
+  group_by(smoke_gas_exposure) %>%
+
+  summarise(mean_asthma = mean(asthma), sd_asthma = sd(asthma))
+
+table_exposure
+
+
+## Looking at the Data (EDA)
+```
+
+\`\`\`{r}
+
+#### 4.1)
+
+```{r}
+cor_bmi_fev <- cor(Final_data$bmi, Final_data$fev)
+
+round(cor_bmi_fev,3)
+```
+
+-   A positive correlation(0.354) indicates that as BMI increases, FEV also increases .
+
+#### 4.2)
+
+```{r}
+anova_model <- aov(fev ~ smoke_gas_exposure, data = Final_data)
+
+summary(anova_model)
+```
+
+-   The p-value associated with "smoke_gas_exposure" is 0.27, which is greater than 0.05. Therefore not have enough evidence to reject the null hypothesis. Its indicating that there are no significant differences in FEV among different levels of smoke and gas exposure.
+
+#### 4.3)
+
+```{r}
+pm2_5_fr_mean <- mean(Final_data$pm2_5_fr, na.rm = TRUE)
+
+Final_data$pm2_5_fr <- ifelse(is.na(Final_data$pm2_5_fr), pm2_5_fr_mean, Final_data$pm2_5_fr)
+
+cor_pm25_fev <- cor(Final_data$pm2_5_fr, Final_data$fev)
+
+round(cor_pm25_fev,2)
+```
+
+-   A negative correlation will indicate pm2_5_fr increases, FEV decreases and value near to 0 indicate weak relationship between PM2.5 exposure and FEV.
+
+## Visualization
+
+### 1)
+
+```{r}
+ggplot(Final_data, aes(x = bmi, y = fev)) +
+
+  geom_point() +  
+
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +  
+
+  facet_wrap(~townname, scales = "free") +  
+
+  labs(x = "BMI", y = "FEV", title = "BMI vs FEV by Townname") + 
+
+  theme_minimal() 
+```
+
+-   All scatterplots give clear positive relationship between BMI vs FEV.
+
+### 2)
+
+```{r}
+#  histogram of FEV by BMI category(obesity_level)
+
+summary(Final_data$obesity_level)
+
+ggplot(Final_data, aes(x = fev, fill = obesity_level)) +
+
+  geom_histogram(binwidth = 50, position = "stack", color = "white")
+
+  labs(x = "FEV", y = "Count", fill = "BMI Category",
+
+       title = "Stacked Histogram of FEV by BMI Category") +
+
+  theme_minimal()
+
+  
+
+#  histogram of FEV by smoke/gas exposure
+
+ggplot(Final_data, aes(x = fev, fill = smoke_gas_exposure)) +
+
+  geom_histogram(binwidth = 50, position = "stack", color = "white") 
+
+  labs(x = "FEV", y = "Count", fill = "Smoke/Gas Exposure",
+
+       title = "Stacked Histogram of FEV by Smoke/Gas Exposure") +
+
+  theme_minimal()
+```
+
+-   Both histograms shape like bell shape curve , so can tell forced expiratory volume(FEV) is normally distributed. Each bar conclude different BMI category counts.
+
+### 3)
+
+```{r}
+ggplot(Final_data, aes(x = smoke_gas_exposure, y = bmi, fill = smoke_gas_exposure)) +
+
+  geom_bar(stat = "summary", fun.y = "mean", position = "dodge") +
+
+  labs(x = "Smoke/Gas Exposure", y = "Mean BMI",
+
+       title = "Bar Chart of BMI by Smoke/Gas Exposure") 
+```
+
+-   Mean BMI value is near same for categories in smoke_gas_exposure variable.
+
+### 4)
+
+```{r}
+# Boxplot of  FEV by BMI category(obesity_level)
+
+ggplot(Final_data, aes(x = obesity_level, y = fev)) +
+
+  geom_boxplot(fill = c(1,2,3,4)) +
+
+  labs(x = "BMI Category", y = "FEV",
+
+       title = "Box Plot of FEV by BMI Category") +
+
+  theme_minimal()
+
+# Box plot of FEV by smoke/gas exposure category
+
+ggplot(Final_data, aes(x = smoke_gas_exposure, y = fev)) +
+
+  geom_boxplot(fill = c(5,6,7,8)) +
+
+  labs(x = "Smoke/Gas Exposure Category", y = "FEV",
+
+       title = "Box Plot of FEV by Smoke/Gas Exposure") +
+
+  theme_minimal()
+```
+
+-   Box Plot of FEV by BMI Category , tells there have significant difference between each BMI categories.
+
+-   Box Plot of FEV by Smoke/Gas Exposure, all boxplots seems same. It indicates there have no significant difference between each BMI categories.
+
+### 5)
+
+```{r}
+leaflet(Final_data) %>%
+
+  addTiles() %>%
+
+  addCircleMarkers(
+
+    lng = ~lon,  
+
+    lat = ~lat,  
+
+    radius = ~pm2_5_fr,  
+
+    color = "red",  
+
+    fillOpacity = 0.6,  
+
+    popup = ~paste("Community: ", townname, "<br>PM2.5 Mass: ", pm2_5_fr)  
+
+  ) %>%
+
+  setView(lng = -119.4179, lat = 36.7783, zoom = 6)
+```
+
+### 6)
+
+```{r}
+ggplot(Final_data, aes(x = pm2_5_fr, y = fev)) +
+
+  geom_point(alpha = 0.7) +  
+
+  geom_smooth(method = "lm", se = FALSE, color = "red") + 
+
+  labs(x = "PM2.5 Mass", y = "FEV",
+
+       title = "Association Between PM2.5 Mass and FEV") +
+
+  theme_minimal()
+```
+
+-   According to the above plot regression line near to horizontal , it indicates there have no positive or negative correlation, respectively, between PM2.5 mass and FEV.
